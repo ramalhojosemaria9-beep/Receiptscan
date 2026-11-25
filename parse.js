@@ -13,11 +13,14 @@ const TOTAL_LABELS = [
   'grand total', 'total due', 'amount due', 'balance due', 'invoice total',
   'total payable', 'purchase total', 'total amount', 'sale total',
   'cash total', 'total *', 'total:', 'total ', 'totel', 'tota1', 'total',
+  'entregue', 'a pagar', 'valor pago', 'pago ', 'eur ', 'amount paid',
 ];
 const SUBTOTAL_RE = /sub\s*-?\s*total/i;
+// Pre-tax base lines that contain "total" but are not the amount payable.
+const BASE_TOTAL_RE = /(incid|base tribut|tribut\.|assinatura|\biva\b|vat agg)/i;
 const TAX_RE = /\b(tax|vat|gst|hst|sales tax)\b/i;
 const ITEM_LINE_RE = /^[^:]*?\d{1,3}(?:[,. ]\d{3})*[.,]\d{2}\s*(?:[$£€])?\s*$|^[^:]*?[$£€]\s*\d/;
-const SKIP_RE = /(subtotal|sub total|balance|amount due|total due|change|cash|card|visa|mastercard|debit|credit|declined|approved|auth|thank|receipt|customer|account|tel:|phone|www\.|com\b|invoice|date|time|cashier|register|store|tax rate|vat red|vat std|quantity|qty)/i;
+const SKIP_RE = /(subtotal|sub total|balance|amount due|total due|change|cash|card|visa|mastercard|debit|credit|declined|approved|auth|thank|receipt|customer|account|tel:|phone|www\.|com\b|invoice|date|time|cashier|register|store|tax rate|vat red|vat std|quantity|qty|preç|preco|preço|unidade|\/uni|atcud|nif|fatura|incid|ncias|encias|entregue|pagar|troco)/i;
 
 function parseAmount(token) {
   if (!token) return null;
@@ -114,6 +117,7 @@ function labelledCentsAmount(line) {
 
 function parseTotal(lines, rawText) {
   const candidates = [];
+  // Returns {value, priority}; priority >= 3 means a confident "amount due" line.
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
@@ -128,23 +132,26 @@ function parseTotal(lines, rawText) {
     }
     if (labelHit) {
       const value = amounts.length ? amounts[amounts.length - 1] : labelledCentsAmount(trimmed);
-      if (value !== null) candidates.push({ value, priority: 4 });
+      // "Total incidências / base" lines are pre-tax bases, not the amount due.
+      const priority = BASE_TOTAL_RE.test(trimmed) ? 1 : 4;
+      if (value !== null) candidates.push({ value, priority });
       continue;
     }
     if (/^total/i.test(trimmed) && amounts.length) {
-      candidates.push({ value: amounts[amounts.length - 1], priority: 3 });
+      const priority = BASE_TOTAL_RE.test(trimmed) ? 1 : 3;
+      candidates.push({ value: amounts[amounts.length - 1], priority });
     }
   }
   if (candidates.length) {
     candidates.sort((a, b) => b.priority - a.priority || b.value - a.value);
-    return candidates[0].value;
+    return candidates[0];
   }
   const all = [];
   for (const line of lines) {
     for (const v of amountsOnLine(line)) all.push(v);
   }
-  if (all.length) return Math.max(...all);
-  return 0;
+  if (all.length) return { value: Math.max(...all), priority: 0 };
+  return { value: 0, priority: 0 };
 }
 
 function parseTax(lines) {
@@ -196,9 +203,18 @@ function parseReceipt(rawText) {
   const currencyMatch = text.match(/(?:[$£€])|(?:\b(usd|gbp|eur)\b)/i);
   const currencySymbol = currencyMatch ? currencyMatch[0].toUpperCase().replace('USD', '$').replace('GBP', '£').replace('EUR', '€') : '$';
 
-  const total = parseTotal(lines, text);
+  const totalInfo = parseTotal(lines, text);
+  let total = totalInfo.value;
   const tax = parseTax(lines);
   const items = parseItems(lines, total);
+
+  // When OCR only found a pre-tax base (priority <= 1), the sum of line items
+  // (VAT-inclusive) is a better estimate of the amount due.
+  const round2 = (n) => Math.round(n * 100) / 100;
+  const itemsSum = round2(items.reduce((s, i) => s + i.amount, 0));
+  if (totalInfo.priority < 3 && itemsSum > 0 && Math.abs(itemsSum - total) > 0.01) {
+    total = itemsSum;
+  }
 
   return {
     merchant: parseMerchant(lines, text),

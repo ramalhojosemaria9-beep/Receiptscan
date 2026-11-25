@@ -1,6 +1,7 @@
 'use strict';
 
 const { createWorker } = require('tesseract.js');
+const { preprocessForOcr } = require('./preprocess');
 const path = require('node:path');
 
 const LANG_PATH = path.join(
@@ -27,11 +28,25 @@ async function getWorker() {
   return workerPromise;
 }
 
+// OCR the preprocessed image; for hard photos also try the original and keep
+// the higher-confidence result.
 async function ocrImage(buffer) {
   const worker = await getWorker();
-  const ret = await worker.recognize(buffer);
-  const { text, confidence } = ret.data;
-  return { text, confidence };
+  const processed = await preprocessForOcr(buffer);
+  const primary = await worker.recognize(processed);
+
+  if (primary.data.confidence >= 60) {
+    return { text: primary.data.text, confidence: primary.data.confidence };
+  }
+
+  try {
+    const fallback = await worker.recognize(buffer);
+    return fallback.data.confidence > primary.data.confidence
+      ? { text: fallback.data.text, confidence: fallback.data.confidence }
+      : { text: primary.data.text, confidence: primary.data.confidence };
+  } catch {
+    return { text: primary.data.text, confidence: primary.data.confidence };
+  }
 }
 
 module.exports = { ocrImage };
