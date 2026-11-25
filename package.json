@@ -1,0 +1,20 @@
+{
+  "name": "receiptscan",
+  "version": "1.0.0",
+  "description": "Receipt OCR and expense tracking demo — scan receipts, auto-extract totals and line items, auto-categorize, view reports.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "seed": "node seed.js",
+    "test": "node test_e2e.js 3000",
+    "samples": "python3 make_samples.py"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@tesseract.js-data/eng": "^1.0.0",
+    "express": "^5.3.0",
+    "tesseract.js": "^7.0.0"
+  }
+}
